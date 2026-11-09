@@ -1,0 +1,14 @@
+# 构建产物
+target/
+dist/
+*.exe
+*.pdb
+
+# 本地配置
+*.local
+.token
+.token.txt
+
+# 系统
+Thumbs.db
+.DS_Store

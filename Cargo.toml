@@ -1,0 +1,32 @@
+[package]
+name = "sys-orb"
+version = "0.1.0"
+edition = "2021"
+description = "低功耗系统占用悬浮球（egui，圆形透明窗口）"
+
+[dependencies]
+# 与 focus-timer 相同的精简 feature 组合
+# 去掉 wgpu / accesskit / wayland / x11，换 OpenGL(glow) 后端
+# system_fonts 必须保留，否则右键菜单中文变方块
+eframe = { version = "0.37", default-features = false, features = [
+    "glow",
+    "default_fonts",
+    "system_fonts",
+] }
+
+# 系统指标不走 sysinfo：只用 Win32 原生的两个函数
+# GetSystemTimes 取 CPU 累计时间差，GlobalMemoryStatusEx 取内存使用率
+# 两者都是微秒级调用，且不引入任何额外的运行时依赖
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

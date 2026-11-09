@@ -167,13 +167,13 @@ fn save_pos(p: Pos2) {
 fn strip_window_border(frame: &eframe::Frame) {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use windows_sys::Win32::Foundation::RECT;
-    use windows_sys::Win32::Graphics::Dwm::{DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, MARGINS};
-    use windows_sys::Win32::Graphics::Gdi::CreateEllipticRgn;
+    use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
+    use windows_sys::Win32::Graphics::Gdi::{CreateEllipticRgn, SetWindowRgn};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetClientRect, GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, SetWindowRgn,
-        GWL_EXSTYLE, GWL_STYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-        SWP_NOZORDER, WS_BORDER, WS_CAPTION, WS_DLGFRAME, WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME,
-        WS_EX_WINDOWEDGE, WS_SYSMENU, WS_THICKFRAME,
+        GetClientRect, GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_BORDER,
+        WS_CAPTION, WS_DLGFRAME, WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_EX_WINDOWEDGE,
+        WS_SYSMENU, WS_THICKFRAME,
     };
 
     let Ok(handle) = frame.window_handle() else {
@@ -241,17 +241,6 @@ fn strip_window_border(frame: &eframe::Frame) {
             0,
             SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
         );
-
-        // 撤掉 winit 为透明窗口设的"玻璃框架"扩展。
-        // 那个扩展会让 DWM 在客户区顶部画一条 1px 的半透明框架线，
-        // 而 OpenGL 画上去的内容是透明的，这条线就直接透出来 —— 顶部那根线的真身。
-        let no_glass = MARGINS {
-            cxLeftWidth: 0,
-            cxRightWidth: 0,
-            cyTopHeight: 0,
-            cyBottomHeight: 0,
-        };
-        DwmExtendFrameIntoClientArea(hwnd, &no_glass);
 
         // 终极手段：把窗口形状裁成圆。
         // 圆外的像素从窗口层面就不存在，DWM 的描边、阴影、玻璃框架线

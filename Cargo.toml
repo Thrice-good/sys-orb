@@ -22,7 +22,11 @@ windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
+    # DwmSetWindowAttribute：去掉 Win11 给所有顶层窗口强制画的那条 1px 描边
+    "Win32_Graphics_Dwm",
 ] }
+# 从 eframe::Frame 取原生窗口句柄（Frame 实现了 HasWindowHandle）
+raw-window-handle = "0.6"
 
 [profile.release]
 opt-level = "z"

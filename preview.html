@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>系统占用悬浮球 · 预览</title>
+<style>
+  :root {
+    --bg: #0d0f14;
+    --panel: #14171f;
+    --line: #232833;
+    --text: #e6e9f0;
+    --dim: #8b93a5;
+    --cpu: #40d0c8;
+    --mem: #a78bfa;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Microsoft YaHei", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 20px 16px 40px; }
+
+  .stage {
+    position: relative;
+    height: 430px;
+    border-radius: 14px;
+    overflow: hidden;
+    background:
+      radial-gradient(900px 520px at 78% 12%, #2b3350 0%, transparent 62%),
+      radial-gradient(700px 480px at 12% 88%, #1d2a3a 0%, transparent 60%),
+      linear-gradient(150deg, #171b26 0%, #0f1218 100%);
+    border: 1px solid var(--line);
+    user-select: none;
+  }
+  /* 模拟桌面上的几个窗口，用来体现球是浮在上面的 */
+  .fakewin {
+    position: absolute;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.035);
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+  .fakewin::before {
+    content: "";
+    display: block;
+    height: 22px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  .w1 { left: 42px; top: 58px; width: 230px; height: 150px; }
+  .w2 { left: 108px; top: 152px; width: 260px; height: 190px; }
+  .w3 { right: 52px; bottom: 54px; width: 210px; height: 132px; }
+
+  .stage-label {
+    position: absolute; left: 16px; bottom: 12px;
+    font-size: 11px; color: rgba(255,255,255,0.28);
+    letter-spacing: 0.3px;
+    pointer-events: none;
+  }
+
+  #orb {
+    position: absolute;
+    left: 0; top: 0;
+    width: 132px; height: 132px;
+    cursor: grab;
+    touch-action: none;
+    filter: drop-shadow(0 6px 18px rgba(0,0,0,0.45));
+  }
+  #orb.dragging { cursor: grabbing; }
+
+  .menu {
+    position: absolute;
+    min-width: 156px;
+    background: #1b1f29;
+    border: 1px solid #2c323f;
+    border-radius: 8px;
+    padding: 5px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    font-size: 12.5px;
+    z-index: 20;
+  }
+  .menu[hidden] { display: none; }
+  .menu-title {
+    padding: 5px 8px 6px; font-weight: 600; color: #dfe4ee;
+  }
+  .menu-sep { height: 1px; background: #2a303c; margin: 4px 6px; }
+  .menu-row {
+    display: flex; justify-content: space-between; gap: 16px;
+    padding: 5px 8px; color: #b6bdcc;
+  }
+  .menu-row .val { color: #7d8598; }
+  .menu-item {
+    padding: 5px 8px; border-radius: 5px; cursor: pointer; color: #c4cad8;
+  }
+  .menu-item:hover { background: #262c38; }
+  .menu-item.checked::before { content: "✓ "; color: var(--cpu); }
+
+  .panel {
+    margin-top: 16px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 14px;
+    align-items: center;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .hint { font-size: 12.5px; color: var(--dim); line-height: 1.75; }
+  .hint b { color: #cfd6e4; font-weight: 600; }
+  kbd {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    background: #232833; border: 1px solid #2f3644;
+    border-radius: 4px; padding: 1px 5px; color: #b8c0d0;
+  }
+  .slider-box { text-align: right; }
+  .slider-box label { font-size: 11.5px; color: var(--dim); display: block; margin-bottom: 6px; }
+  input[type=range] {
+    width: 150px; accent-color: var(--cpu);
+  }
+  .stats {
+    margin-top: 14px;
+    display: flex; gap: 22px; flex-wrap: wrap;
+    font-size: 12px; color: var(--dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .stats span b { color: #cfd6e4; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="stage" id="stage">
+    <div class="fakewin w1"></div>
+    <div class="fakewin w2"></div>
+    <div class="fakewin w3"></div>
+    <canvas id="orb"></canvas>
+    <div class="stage-label">模拟桌面 · 悬浮球浮在壁纸之上</div>
+
+    <div class="menu" id="menu" hidden>
+      <div class="menu-title">系统占用悬浮球</div>
+      <div class="menu-sep"></div>
+      <div class="menu-row"><span>刷新间隔</span><span class="val" id="mInterval">1.5 秒</span></div>
+      <div class="menu-row"><span>实际间隔</span><span class="val" id="mActual">1.5 秒</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-item checked" data-act="top">总在最前</div>
+      <div class="menu-item" data-act="quit">退出</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="hint">
+      <b>拖动</b>移动 · <b>双击</b>切换主指标 · <b>右键</b>打开菜单<br>
+      环外为透明区域，实际窗口只画这个圆，其余像素留给桌面
+    </div>
+    <div class="slider-box">
+      <label>模拟负载</label>
+      <input type="range" id="load" min="-40" max="40" value="0" step="1">
+    </div>
+  </div>
+
+  <div class="stats">
+    <span>CPU <b id="sCpu">0%</b></span>
+    <span>内存 <b id="sMem">0%</b></span>
+    <span>采样间隔 <b id="sInterval">1.5s</b></span>
+    <span>渲染 <b>1 帧 / 次采样</b></span>
+  </div>
+</div>
+
+<script>
+(function () {
+  const DPR = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+  const SIZE = 132;
+
+  const stage = document.getElementById('stage');
+  const canvas = document.getElementById('orb');
+  const menu = document.getElementById('menu');
+  const ctx = canvas.getContext('2d');
+
+  canvas.width = SIZE * DPR;
+  canvas.height = SIZE * DPR;
+  canvas.style.width = SIZE + 'px';
+  canvas.style.height = SIZE + 'px';
+
+  const CPU_BASE = '#40d0c8';
+  const MEM_BASE = '#a78bfa';
+  const TEXT_DIM = '#949cac';
+
+  let cpu = 27;
+  let mem = 61;
+  let primary = 'cpu';
+  let hover = false;
+  let loadBias = 0;
+
+  let pos = { left: 0, top: 0 };
+  let dragging = false;
+  let dragOff = { x: 0, y: 0 };
+
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  function loadColor(pct, base) {
+    if (pct >= 85) return '#ff5c5c';
+    if (pct >= 60) return '#f5c451';
+    return base;
+  }
+
+  function ring(cx, cy, r, w, frac, color, track) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.strokeStyle = track;
+    ctx.lineWidth = w;
+    ctx.stroke();
+
+    if (frac <= 0.002) return;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * clamp(frac, 0, 1));
+    ctx.strokeStyle = color;
+    ctx.lineWidth = w;
+    ctx.stroke();
+  }
+
+  function draw() {
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.clearRect(0, 0, SIZE, SIZE);
+
+    const cx = SIZE / 2, cy = SIZE / 2;
+    const shell = SIZE / 2 - 3;
+    const outer = shell - 8;
+    const inner = outer - 13;
+
+    // 球体
+    ctx.beginPath();
+    ctx.arc(cx, cy, shell, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(20, 23, 30, 0.91)';
+    ctx.fill();
+    ctx.strokeStyle = hover ? 'rgba(255,255,255,0.20)' : 'rgba(255,255,255,0.10)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    const track = 'rgba(255,255,255,0.10)';
+    const cpuC = loadColor(cpu, CPU_BASE);
+    const memC = loadColor(mem, MEM_BASE);
+
+    ring(cx, cy, outer, 7, cpu / 100, cpuC, track);
+    ring(cx, cy, inner, 5.5, mem / 100, memC, track);
+
+    const isCpu = primary === 'cpu';
+    const big = isCpu ? cpu : mem;
+    const bigColor = isCpu ? cpuC : memC;
+    const small = isCpu ? 'MEM ' + Math.round(mem) + '%' : 'CPU ' + Math.round(cpu) + '%';
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    ctx.font = '600 30px -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
+    ctx.fillStyle = bigColor;
+    ctx.fillText(Math.round(big) + '%', cx, cy - 7);
+
+    ctx.font = '500 10.5px -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
+    ctx.fillStyle = TEXT_DIM;
+    ctx.fillText(small, cx, cy + 18);
+  }
+
+  function paint() { draw(); }
+  paint();
+
+  // ---- 模拟数据 ----
+  function tick() {
+    const biasC = cpu + loadBias;
+    cpu = clamp(biasC + (Math.random() - 0.5) * 7, 2, 98);
+    mem = clamp(mem + (Math.random() - 0.5) * 1.6 + loadBias * 0.04, 28, 95);
+
+    const box = document.getElementById('sCpu');
+    if (box) box.textContent = Math.round(cpu) + '%';
+    const mb = document.getElementById('sMem');
+    if (mb) mb.textContent = Math.round(mem) + '%';
+
+    paint();
+  }
+  setInterval(tick, 1500);
+  tick();
+
+  document.getElementById('load').addEventListener('input', function (e) {
+    loadBias = Number(e.target.value);
+  });
+
+  // ---- 拖动 ----
+  function setPos(left, top) {
+    left = clamp(left, 0, stage.clientWidth - SIZE);
+    top = clamp(top, 0, stage.clientHeight - SIZE);
+    pos = { left, top };
+    canvas.style.transform = 'translate(' + left + 'px,' + top + 'px)';
+  }
+
+  // 初始位置：右上角
+  setPos(stage.clientWidth - SIZE - 44, 44);
+  window.addEventListener('resize', function () {
+    setPos(pos.left, pos.top);
+  });
+
+  canvas.addEventListener('mousedown', function (e) {
+    if (e.button !== 0) return;
+    dragging = true;
+    canvas.classList.add('dragging');
+    const r = stage.getBoundingClientRect();
+    dragOff = { x: e.clientX - r.left - pos.left, y: e.clientY - r.top - pos.top };
+    e.preventDefault();
+  });
+
+  window.addEventListener('mousemove', function (e) {
+    if (!dragging) return;
+    const r = stage.getBoundingClientRect();
+    setPos(e.clientX - r.left - dragOff.x, e.clientY - r.top - dragOff.y);
+  });
+
+  window.addEventListener('mouseup', function () {
+    dragging = false;
+    canvas.classList.remove('dragging');
+  });
+
+  canvas.addEventListener('mouseenter', function () { hover = true; paint(); });
+  canvas.addEventListener('mouseleave', function () { hover = false; paint(); });
+
+  canvas.addEventListener('dblclick', function () {
+    primary = primary === 'cpu' ? 'mem' : 'cpu';
+    paint();
+  });
+
+  // ---- 右键菜单 ----
+  canvas.addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+    const r = stage.getBoundingClientRect();
+    menu.hidden = false;
+    const mw = menu.offsetWidth, mh = menu.offsetHeight;
+    menu.style.left = clamp(e.clientX - r.left, 4, stage.clientWidth - mw - 4) + 'px';
+    menu.style.top = clamp(e.clientY - r.top, 4, stage.clientHeight - mh - 4) + 'px';
+  });
+
+  document.addEventListener('mousedown', function (e) {
+    if (!menu.hidden && !menu.contains(e.target)) menu.hidden = true;
+  });
+
+  menu.addEventListener('click', function (e) {
+    const item = e.target.closest('.menu-item');
+    if (!item) return;
+    if (item.dataset.act === 'top') {
+      item.classList.toggle('checked');
+    } else if (item.dataset.act === 'quit') {
+      menu.hidden = true;
+      canvas.style.transition = 'opacity .18s';
+      canvas.style.opacity = '0';
+      setTimeout(function () {
+        canvas.style.opacity = '1';
+      }, 700);
+    }
+    menu.hidden = true;
+  });
+})();
+</script>
+</body>
+</html>

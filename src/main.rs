@@ -166,11 +166,9 @@ fn save_pos(p: Pos2) {
 #[cfg(windows)]
 fn strip_window_border(frame: &eframe::Frame) {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    use windows_sys::Win32::Foundation::RECT;
     use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
-    use windows_sys::Win32::Graphics::Gdi::{CreateEllipticRgn, SetWindowRgn};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetClientRect, GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
         SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_BORDER,
         WS_CAPTION, WS_DLGFRAME, WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_EX_WINDOWEDGE,
         WS_SYSMENU, WS_THICKFRAME,
@@ -241,26 +239,98 @@ fn strip_window_border(frame: &eframe::Frame) {
             0,
             SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
         );
-
-        // 终极手段：把窗口形状裁成圆。
-        // 圆外的像素从窗口层面就不存在，DWM 的描边、阴影、玻璃框架线
-        // 无论怎么画都不会显示出来；顺带解决了四角拦截鼠标的问题。
-        let mut rc: RECT = core::mem::zeroed();
-        if GetClientRect(hwnd, &mut rc) != 0 {
-            let cw = rc.right - rc.left;
-            let ch = rc.bottom - rc.top;
-            if cw > 8 && ch > 8 {
-                let rgn = CreateEllipticRgn(0, 0, cw, ch);
-                if !rgn.is_null() {
-                    SetWindowRgn(hwnd, rgn, 1);
-                }
-            }
-        }
     }
 }
 
 #[cfg(not(windows))]
 fn strip_window_border(_frame: &eframe::Frame) {}
+
+// ============================================================
+// 把窗口形状裁成圆
+//
+// 前三轮都在跟 DWM 的属性打交道，都没去掉顶部那根线，所以改成从
+// 「窗口形状」这一层解决：圆外的像素在窗口层面就不存在，DWM 想画也画不出来。
+// 顺带把四个角的鼠标拦截一并解决。
+//
+// 返回 true 表示已确认裁剪生效（读回来是 SIMPLEREGION），可以不再尝试。
+// 失败时把诊断信息写进 %APPDATA%\sys-orb\diag.txt，方便定位。
+// ============================================================
+
+#[cfg(windows)]
+fn clip_to_circle(frame: &eframe::Frame, ppp: f32) -> bool {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::Graphics::Gdi::{
+        CreateEllipticRgn, CreateRectRgn, DeleteObject, GetWindowRgn, SetWindowRgn,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetClientRect;
+
+    let Ok(handle) = frame.window_handle() else {
+        return false;
+    };
+    let RawWindowHandle::Win32(w) = handle.as_raw() else {
+        return false;
+    };
+    let hwnd = w.hwnd.get() as _;
+
+    let mut rc: RECT = unsafe { core::mem::zeroed() };
+    let got = unsafe { GetClientRect(hwnd, &mut rc) };
+    let mut cw = if got != 0 { rc.right - rc.left } else { 0 };
+    let mut ch = if got != 0 { rc.bottom - rc.top } else { 0 };
+
+    // 第一帧客户区可能还是 0，用逻辑尺寸 × 缩放比兜底
+    if cw <= 8 || ch <= 8 {
+        cw = (ORB * ppp).round() as i32;
+        ch = cw;
+    }
+
+    let rgn = unsafe { CreateEllipticRgn(0, 0, cw, ch) };
+    if rgn.is_null() {
+        log_diag(&format!("CreateEllipticRgn 失败 {cw}x{ch}"));
+        return false;
+    }
+
+    let ok = unsafe { SetWindowRgn(hwnd, rgn, 1) };
+    if ok == 0 {
+        unsafe { DeleteObject(rgn) };
+        log_diag(&format!(
+            "SetWindowRgn 失败 client={cw}x{ch} got={got}"
+        ));
+        return false;
+    }
+
+    // 读回确认：0=ERROR 1=NULLREGION 2=SIMPLEREGION 3=COMPLEXREGION
+    let probe = unsafe { CreateRectRgn(0, 0, 1, 1) };
+    let kind = unsafe { GetWindowRgn(hwnd, probe) };
+    unsafe { DeleteObject(probe) };
+
+    log_diag(&format!(
+        "clip ok: client={cw}x{ch} got={got} set={ok} readback={kind}"
+    ));
+
+    kind >= 1
+}
+
+#[cfg(not(windows))]
+fn clip_to_circle(_frame: &eframe::Frame, _ppp: f32) -> bool {
+    true
+}
+
+fn log_diag(msg: &str) {
+    use std::io::Write;
+    let dir = match std::env::var("APPDATA") {
+        Ok(p) => PathBuf::from(p).join("sys-orb"),
+        Err(_) => return,
+    };
+    let _ = std::fs::create_dir_all(&dir);
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("diag.txt"))
+    {
+        let _ = writeln!(f, "{msg}");
+    }
+}
 
 // ============================================================
 // 颜色：低负载用主题色，越高越警示
@@ -331,6 +401,8 @@ struct Orb {
     start_pos: Option<Pos2>,
     pos_applied: bool,
     border_fixed: bool,
+    region_done: bool,
+    region_tries: u8,
 }
 
 impl Orb {
@@ -347,6 +419,8 @@ impl Orb {
             start_pos,
             pos_applied: false,
             border_fixed: false,
+            region_done: false,
+            region_tries: 0,
         }
     }
 
@@ -387,6 +461,19 @@ impl eframe::App for Orb {
         if !self.border_fixed {
             self.border_fixed = true;
             strip_window_border(frame);
+        }
+
+        // 圆形裁剪：窗口刚创建时客户区可能还是 0，而且 winit 有可能在后面
+        // 重新应用窗口样式时把区域冲掉，所以开头几帧连做几次，最后读回确认。
+        if self.region_tries < 4 {
+            self.region_tries += 1;
+            let ok = clip_to_circle(frame, ctx.pixels_per_point());
+            if ok {
+                self.region_done = true;
+            }
+            if self.region_tries < 4 || !self.region_done {
+                ctx.request_repaint();
+            }
         }
 
         // 首次启动时把窗口挪到上次关闭的位置

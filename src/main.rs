@@ -143,6 +143,59 @@ fn save_pos(p: Pos2) {
 }
 
 // ============================================================
+// 去掉 Win11 的窗口描边
+//
+// 即使 with_decorations(false)，Windows 11 的 DWM 仍会给每个顶层窗口
+// 画一条 1px 描边（窗口获得焦点时会变成主题色）。透明窗口上这条线
+// 格外显眼，看起来就是一个方框。
+//
+// 两个属性：
+//   DWMWA_BORDER_COLOR        = 34，设成 DWMWA_COLOR_NONE 移除描边
+//   DWMWA_WINDOW_CORNER_PREFERENCE = 33，设成 DONOTROUND 移除四角圆角裁剪
+// 这两个都只在 Win11 生效，Win10 上调用返回失败，忽略即可。
+// ============================================================
+
+#[cfg(windows)]
+fn strip_window_border(frame: &eframe::Frame) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
+
+    let Ok(handle) = frame.window_handle() else {
+        return;
+    };
+    let RawWindowHandle::Win32(w) = handle.as_raw() else {
+        return;
+    };
+    let hwnd = w.hwnd.get() as _;
+
+    const DWMWA_BORDER_COLOR: u32 = 34;
+    const DWMWA_COLOR_NONE: u32 = 0xFFFF_FFFE;
+    const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+    const DWMWCP_DONOTROUND: u32 = 1;
+
+    unsafe {
+        let no_border: u32 = DWMWA_COLOR_NONE;
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_BORDER_COLOR as _,
+            &no_border as *const u32 as *const core::ffi::c_void,
+            4,
+        );
+
+        let no_round: u32 = DWMWCP_DONOTROUND;
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE as _,
+            &no_round as *const u32 as *const core::ffi::c_void,
+            4,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn strip_window_border(_frame: &eframe::Frame) {}
+
+// ============================================================
 // 颜色：低负载用主题色，越高越警示
 // ============================================================
 
@@ -210,6 +263,7 @@ struct Orb {
     on_top: bool,
     start_pos: Option<Pos2>,
     pos_applied: bool,
+    border_fixed: bool,
 }
 
 impl Orb {
@@ -225,6 +279,7 @@ impl Orb {
             on_top: true,
             start_pos,
             pos_applied: false,
+            border_fixed: false,
         }
     }
 
@@ -257,9 +312,15 @@ impl eframe::App for Orb {
         [0.0, 0.0, 0.0, 0.0]
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let now = ctx.input(|i| i.time);
+
+        // 窗口句柄在第一帧才一定可用，所以在这里补一次去描边
+        if !self.border_fixed {
+            self.border_fixed = true;
+            strip_window_border(frame);
+        }
 
         // 首次启动时把窗口挪到上次关闭的位置
         if !self.pos_applied {

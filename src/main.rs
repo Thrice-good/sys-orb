@@ -239,7 +239,49 @@ fn strip_window_border(frame: &eframe::Frame) {
             0,
             SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
         );
+
+        // 撤掉 winit 给透明窗口设的"玻璃框架"扩展。
+        // 这个扩展会让 DWM 在客户区顶部画一条 1px 框架线，而 OpenGL 画的内容
+        // 是透明的，线就透出来 —— 顶部那根线最可能的真身。
+        // windows-sys 0.61 没有导出 DwmExtendFrameIntoClientArea，所以运行时取地址调用。
+        extend_frame_reset(hwnd);
     }
+}
+
+/// 把 DWM 的扩展框架边距全部设为 0（等价于关闭玻璃框架）
+#[cfg(windows)]
+unsafe fn extend_frame_reset(hwnd: *mut core::ffi::c_void) {
+    #[repr(C)]
+    struct Margins {
+        l: i32,
+        r: i32,
+        t: i32,
+        b: i32,
+    }
+    type PfnExtend =
+        unsafe extern "system" fn(*mut core::ffi::c_void, *const Margins) -> i32;
+
+    use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
+
+    let lib = GetModuleHandleA(b"dwmapi.dll\0".as_ptr());
+    if lib.is_null() {
+        log_diag("dwmapi 未加载");
+        return;
+    }
+    let proc = GetProcAddress(lib, b"DwmExtendFrameIntoClientArea\0".as_ptr());
+    let Some(addr) = proc else {
+        log_diag("找不到 DwmExtendFrameIntoClientArea");
+        return;
+    };
+    let f: PfnExtend = unsafe { core::mem::transmute(addr) };
+    let m = Margins {
+        l: 0,
+        r: 0,
+        t: 0,
+        b: 0,
+    };
+    let hr = unsafe { f(hwnd, &m) };
+    log_diag(&format!("DwmExtendFrameIntoClientArea(margins=0) hr={hr}"));
 }
 
 #[cfg(not(windows))]

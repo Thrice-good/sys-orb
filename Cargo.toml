@@ -24,8 +24,10 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Threading",
     # DwmSetWindowAttribute：去掉 Win11 给所有顶层窗口强制画的那条 1px 描边
     "Win32_Graphics_Dwm",
-    # GetWindowLongPtrW / SetWindowPos：清掉样式里残留的边框位
+    # GetWindowLongPtrW / SetWindowPos / SetWindowRgn：清掉残留边框样式、裁剪窗口形状
     "Win32_UI_WindowsAndMessaging",
+    # CreateEllipticRgn：把窗口区域裁成圆形
+    "Win32_Graphics_Gdi",
 ] }
 # 从 eframe::Frame 取原生窗口句柄（Frame 实现了 HasWindowHandle）
 raw-window-handle = "0.6"

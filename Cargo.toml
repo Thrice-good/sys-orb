@@ -28,6 +28,8 @@ windows-sys = { version = "0.61", features = [
     "Win32_UI_WindowsAndMessaging",
     # CreateEllipticRgn：把窗口区域裁成圆形
     "Win32_Graphics_Gdi",
+    # GetModuleHandleA / GetProcAddress：运行时取 DwmExtendFrameIntoClientArea
+    "Win32_System_LibraryLoader",
 ] }
 # 从 eframe::Frame 取原生窗口句柄（Frame 实现了 HasWindowHandle）
 raw-window-handle = "0.6"

@@ -149,16 +149,30 @@ fn save_pos(p: Pos2) {
 // 画一条 1px 描边（窗口获得焦点时会变成主题色）。透明窗口上这条线
 // 格外显眼，看起来就是一个方框。
 //
-// 两个属性：
-//   DWMWA_BORDER_COLOR        = 34，设成 DWMWA_COLOR_NONE 移除描边
-//   DWMWA_WINDOW_CORNER_PREFERENCE = 33，设成 DONOTROUND 移除四角圆角裁剪
-// 这两个都只在 Win11 生效，Win10 上调用返回失败，忽略即可。
+// 三层处理，缺一不可：
+//   1. DWMWA_BORDER_COLOR            = 34，设 DWMWA_COLOR_NONE，去掉 DWM 描边
+//   2. DWMWA_WINDOW_CORNER_PREFERENCE = 33，设 DONOTROUND，去掉四角圆角裁剪
+//   3. DWMWA_NCRENDERING_POLICY       =  2，设 DWMNCRP_DISABLED，
+//      让 DWM 不要绘制非客户区 —— 顶部残留的那一根线就来自这里
+//   4. 再直接清掉窗口样式里残留的边框位（WS_THICKFRAME / WS_CAPTION 等），
+//      并用 SetWindowPos(SWP_FRAMECHANGED) 让改动立即重算。
+//
+// 客户区之外哪怕只有 1px 的非客户区，系统也会用边框色把它填上；透明窗口
+// 圆外是空的，于是那一根线在深色桌面上就是一道白边。
+//
+// 以上都只在 Win11 生效，Win10 上调用返回失败，忽略即可。
 // ============================================================
 
 #[cfg(windows)]
 fn strip_window_border(frame: &eframe::Frame) {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_BORDER,
+        WS_CAPTION, WS_DLGFRAME, WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_EX_WINDOWEDGE,
+        WS_SYSMENU, WS_THICKFRAME,
+    };
 
     let Ok(handle) = frame.window_handle() else {
         return;
@@ -172,6 +186,8 @@ fn strip_window_border(frame: &eframe::Frame) {
     const DWMWA_COLOR_NONE: u32 = 0xFFFF_FFFE;
     const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
     const DWMWCP_DONOTROUND: u32 = 1;
+    const DWMWA_NCRENDERING_POLICY: u32 = 2;
+    const DWMNCRP_DISABLED: u32 = 1;
 
     unsafe {
         let no_border: u32 = DWMWA_COLOR_NONE;
@@ -188,6 +204,40 @@ fn strip_window_border(frame: &eframe::Frame) {
             DWMWA_WINDOW_CORNER_PREFERENCE as _,
             &no_round as *const u32 as *const core::ffi::c_void,
             4,
+        );
+
+        // 顶部那一根线的根源：DWM 仍在绘制非客户区
+        let nc_off: u32 = DWMNCRP_DISABLED;
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_NCRENDERING_POLICY as _,
+            &nc_off as *const u32 as *const core::ffi::c_void,
+            4,
+        );
+
+        // 兜底：把窗口样式里残留的边框位直接清掉
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+        let style_mask =
+            (WS_CAPTION | WS_THICKFRAME | WS_BORDER | WS_DLGFRAME | WS_SYSMENU) as isize;
+        if style & style_mask != 0 {
+            SetWindowLongPtrW(hwnd, GWL_STYLE, style & !style_mask);
+        }
+
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let ex_mask = (WS_EX_CLIENTEDGE | WS_EX_WINDOWEDGE | WS_EX_DLGMODALFRAME) as isize;
+        if ex & ex_mask != 0 {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex & !ex_mask);
+        }
+
+        // 样式改了必须重算一次窗口框架，否则要等到下次尺寸变化才生效
+        SetWindowPos(
+            hwnd,
+            core::ptr::null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
         );
     }
 }

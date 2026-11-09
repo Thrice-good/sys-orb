@@ -25,7 +25,7 @@ const TEXT_DIM: Color32 = Color32::from_rgb(148, 156, 172);
 
 #[cfg(windows)]
 mod sys {
-    use windows_sys::Win32::Foundation::{FILETIME, BOOL};
+    use windows_sys::Win32::Foundation::FILETIME;
     use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
     use windows_sys::Win32::System::Threading::GetSystemTimes;
 
@@ -40,7 +40,7 @@ mod sys {
         let mut kernel = zero;
         let mut user = zero;
 
-        let ok: BOOL = unsafe { GetSystemTimes(&mut idle, &mut kernel, &mut user) };
+        let ok = unsafe { GetSystemTimes(&mut idle, &mut kernel, &mut user) };
         if ok == 0 {
             return None;
         }
@@ -55,7 +55,7 @@ mod sys {
         let mut status: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
         status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
 
-        let ok: BOOL = unsafe { GlobalMemoryStatusEx(&mut status) };
+        let ok = unsafe { GlobalMemoryStatusEx(&mut status) };
         if ok == 0 {
             return None;
         }
